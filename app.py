@@ -7,6 +7,7 @@ import os
 from PIL import Image
 from streamlit_folium import st_folium
 import folium
+import requests
 from db import get_connection, init_db
 from utils import is_within_geofence, compare_photos
 
@@ -20,9 +21,13 @@ st.markdown("Professional gear tracking from Mickey Leland St base to Location X
 # Fotogenic Studio Home Base Coordinates (Mickey Leland St, Addis Ababa)
 STUDIO_LAT, STUDIO_LNG = 9.011556, 38.781258
 
-# --- SECURITY / AUTHENTICATION SETUP ---
+# --- SECURITY & PRE-CONFIGURED TELEGRAM SETUP ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
+
+# Hardcoded Telegram Credentials for Fotogenic Studio
+TELEGRAM_BOT_TOKEN = "8417435900:AAHn1WCKaAbuY1zz1MxHsbybv-nqR_vSOQM"
+TELEGRAM_CHAT_ID = "8108017872"
 
 st.sidebar.title("🔐 Studio Access Portal")
 password_input = st.sidebar.text_input("Manager Password", type="password")
@@ -38,9 +43,18 @@ if st.session_state["authenticated"]:
         st.session_state["authenticated"] = False
         st.rerun()
 else:
-    st.sidebar.info("🔒 Public Mode: You can view inventory and live map. Enter manager password for admin actions.")
+    st.sidebar.info("🔒 Public Mode: View inventory and live map. Enter manager password for admin actions.")
 
-# Navigation: Everyone can see Dashboard, Inventory, and GPS Ping. Only managers can do Check-Out/Check-In/Add.
+# Telegram Notification Helper Function
+def send_telegram_alert(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print("Telegram alert error:", e)
+
+# Navigation
 choice = st.sidebar.radio("Go to", [
     "Dashboard & Live Fleet Map", 
     "Equipment Inventory (Catalog)", 
@@ -114,11 +128,9 @@ elif choice == "Equipment Inventory (Catalog)":
     st.subheader("📦 Fotogenic Studio Equipment Catalog")
     st.markdown("Browse available and rented equipment items currently in our studio catalog.")
     
-    # Public view table (hide sensitive columns if any, or show category/status)
     df_eq = pd.read_sql("SELECT equipment_id, name, category, model, status FROM equipment", conn)
     st.dataframe(df_eq, use_container_width=True)
     
-    # Only show the "Add New Equipment" expander if manager is authenticated
     if st.session_state["authenticated"]:
         st.markdown("---")
         with st.expander("➕ Add New Studio Equipment (Manager Only)"):
@@ -213,13 +225,21 @@ elif choice == "On-Location GPS Ping (Location X)":
                 if inside:
                     st.success(f"✅ Position updated! {eq_name} is at Location X ({round(dist, 2)} km from Fotogenic Studio).")
                 else:
-                    st.error(f"🚨 GEOFENCE ALERT! {eq_name} is {round(dist, 2)} km from Fotogenic Studio (EXCEEDS 25km LIMIT!).")
+                    breach_msg = f"🚨 *GEOFENCE ALERT!* Equipment `{eq_name}` is {round(dist, 2)} km from Fotogenic Studio (EXCEEDS 25km LIMIT!)."
+                    st.error(breach_msg)
+                    send_telegram_alert(breach_msg)
 
 elif choice == "Check-Out / Check-In Inspection (Manager Only)":
     if not st.session_state["authenticated"]:
         st.warning("🔒 This section is restricted to Fotogenic Studio managers. Please enter the manager password in the sidebar.")
     else:
         st.subheader("🔄 Gear Check-Out & Visual AI Damage Inspection")
+        
+        # Quick Telegram Test Button for Manager
+        if st.button("🧪 Send Test Telegram Alert to My Phone"):
+            send_telegram_alert("🔔 *Test Alert:* EquipGuard is successfully connected to Bereket's Telegram bot for Fotogenic Studio!")
+            st.success("Test message sent! Check your Telegram app.")
+
         tab1, tab2, tab3 = st.tabs(["Check-Out Gear", "Check-In & Inspect Damage", "Active Rental Client Registry"])
         
         with tab1:
@@ -253,6 +273,11 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                     VALUES (?,?,?,?,?,?,'Active')
                 """, (eq_id, client_name, client_phone, client_digital_id, datetime.now(), baseline_path))
                 conn.commit()
+                
+                # Send Telegram Check-Out Alert
+                checkout_msg = f"📋 *Gear Check-Out Alert*\n\n📦 *Equipment:* {selected_name} (`{eq_id}`)\n👤 *Client:* {client_name}\n📞 *Phone:* {client_phone}\n🆔 *Digital ID:* {client_digital_id}\n📍 *Base:* Fotogenic Studio"
+                send_telegram_alert(checkout_msg)
+                
                 st.success(f"✅ {selected_name} checked out to {client_name} from Fotogenic Studio!")
                 st.rerun()
                 
@@ -297,13 +322,18 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 conn.execute("UPDATE inspections SET check_in_time=?, return_photo=?, damage_score=?, status=? WHERE inspection_id=?",
                              (datetime.now(), return_img_path, damage_score, 'Completed', insp_id))
                 
-                eq_id_row = conn.execute("SELECT equipment_id FROM inspections WHERE inspection_id=?", (insp_id,)).fetchone()
-                if eq_id_row:
+                eq_row = conn.execute("SELECT equipment_id, name FROM inspections JOIN equipment ON inspections.equipment_id = equipment.equipment_id WHERE inspection_id=?", (insp_id,)).fetchone()
+                if eq_row:
                     conn.execute("""
                         UPDATE equipment 
                         SET status='Available', current_lat=?, current_lng=?, last_location_update=? 
                         WHERE equipment_id=?
-                    """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_id_row[0]))
+                    """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_row[0]))
+                    
+                    # Send Telegram Check-In Alert
+                    return_msg = f"✅ *Gear Return & Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* {damage_score}%\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    send_telegram_alert(return_msg)
+
                 conn.commit()
                 st.success("Inspection recorded and equipment location reset to Fotogenic Studio base!")
 
