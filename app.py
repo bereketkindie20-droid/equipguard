@@ -10,77 +10,95 @@ import folium
 from db import get_connection, init_db
 from utils import is_within_geofence, compare_photos
 
-st.set_page_config(page_title="EquipGuard - Studio Equipment & Geofence System", layout="wide")
+st.set_page_config(page_title="EquipGuard - Fotogenic Studio Tracker", layout="wide")
 
-# Ensure DB schema is initialized
 init_db()
 
-st.title("🛡️ EquipGuard: Studio Equipment & Geofence System")
-st.markdown("Zero-cost gear tracking, geofence compliance, and AI visual damage inspection for Addis Ababa studios.")
+st.title("🛡️ EquipGuard: Fotogenic Studio Fleet & Location X Tracker")
+st.markdown("Professional gear tracking from Mickey Leland St base to Location X, 25km geofence monitoring, and AI inspection.")
+
+# Fotogenic Studio Home Base Coordinates (Mickey Leland St, Addis Ababa)
+STUDIO_LAT, STUDIO_LNG = 9.011556, 38.781258
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-choice = st.sidebar.radio("Go to", ["Dashboard & Live Map", "Equipment Inventory", "Check-Out / Check-In Inspection", "Client Mobile GPS Check"])
+choice = st.sidebar.radio("Go to", [
+    "Dashboard & Live Fleet Map", 
+    "Equipment Inventory", 
+    "Check-Out / Check-In Inspection", 
+    "On-Location GPS Ping (Location X)"
+])
 
 conn = get_connection()
 
-if choice == "Dashboard & Live Map":
-    st.subheader("📍 Live Fleet & Geofence Status (Addis Ababa)")
+if choice == "Dashboard & Live Fleet Map":
+    st.subheader("📍 Fotogenic Studio Fleet & Location X Status")
     
     col1, col2, col3 = st.columns(3)
-    
     total_eq = conn.execute("SELECT COUNT(*) FROM equipment").fetchone()[0]
     rented_eq = conn.execute("SELECT COUNT(*) FROM equipment WHERE status = 'Rented'").fetchone()[0]
-    trackers_count = conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0]
+    available_eq = conn.execute("SELECT COUNT(*) FROM equipment WHERE status = 'Available'").fetchone()[0]
     
-    col1.metric("Total Equipment", total_eq)
-    col2.metric("Currently Rented", rented_eq)
-    col3.metric("Active Trackers", trackers_count)
+    col1.metric("Total Studio Gear", total_eq)
+    col2.metric("Rented Out (On Location X)", rented_eq)
+    col3.metric("At Studio (Available)", available_eq)
     
     st.markdown("---")
-    st.markdown("### 🗺️ GPS Tracking & 25km Geofence Perimeter")
+    st.markdown("### 🗺️ Live Map: Fotogenic Studio Base vs. Gear at Location X")
     
-    m = folium.Map(location=[9.0107, 38.7612], zoom_start=11)
+    m = folium.Map(location=[STUDIO_LAT, STUDIO_LNG], zoom_start=12)
     
+    # Draw Fotogenic Studio Marker
+    folium.Marker(
+        location=[STUDIO_LAT, STUDIO_LNG],
+        popup="<b>🏠 Fotogenic Studio Base (Mickey Leland St)</b>",
+        icon=folium.Icon(color="blue", icon="home", prefix="fa")
+    ).add_to(m)
+    
+    # 25km Geofence Perimeter from Mickey Leland St
     folium.Circle(
-        location=[9.0107, 38.7612],
+        location=[STUDIO_LAT, STUDIO_LNG],
         radius=25000,
         color='blue',
         fill=True,
-        fill_opacity=0.1,
-        tooltip="Addis Ababa 25km Authorized Zone"
+        fill_opacity=0.08,
+        tooltip="25km Authorized Operational Zone"
     ).add_to(m)
     
-    trackers = conn.execute("SELECT * FROM trackers").fetchall()
+    # Query equipment list
+    equipment_list = conn.execute("SELECT * FROM equipment").fetchall()
     
-    for trk in trackers:
-        if trk['last_lat'] and trk['last_lng']:
-            inside, dist = is_within_geofence(trk['last_lat'], trk['last_lng'])
-            status_color = "green" if inside else "red"
-            status_text = "Inside Zone (Safe)" if inside else f"OUT OF ZONE! ({round(dist, 2)} km away)"
-            
-            popup_html = f"""
-            <b>Tracker ID:</b> {trk['tracker_id']}<br>
-            <b>IMEI:</b> {trk['imei']}<br>
-            <b>Battery:</b> {trk['battery_level']}%<br>
-            <b>Status:</b> <span style="color:{status_color};"><b>{status_text}</b></span>
-            """
-            
-            folium.Marker(
-                location=[trk['last_lat'], trk['last_lng']],
-                popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.Icon(color="red" if not inside else "cadetblue", icon="camera", prefix="fa")
-            ).add_to(m)
-            
-    st_folium(m, width=1200, height=500)
+    for eq in equipment_list:
+        lat = eq['current_lat'] if eq['current_lat'] else STUDIO_LAT
+        lng = eq['current_lng'] if eq['current_lng'] else STUDIO_LNG
+        
+        inside, dist = is_within_geofence(lat, lng)
+        is_rented = eq['status'] == 'Rented'
+        
+        status_color = "red" if not inside else ("orange" if is_rented else "green")
+        status_label = "OUT OF ZONE!" if not inside else ("On Location X" in [status_color == 'orange'] and "At Location X" or "In Studio")
+        
+        popup_html = f"""
+        <b>Equipment:</b> {eq['name']} ({eq['equipment_id']})<br>
+        <b>Status:</b> <span style="color:{status_color};"><b>{'On Location X' if is_rented else 'In Studio'}</b></span><br>
+        <b>Distance from Studio:</b> {round(dist, 2)} km<br>
+        <b>Last Updated:</b> {eq['last_location_update'] or 'N/A'}
+        """
+        
+        folium.Marker(
+            location=[lat, lng],
+            popup=folium.Popup(popup_html, max_width=300),
+            icon=folium.Icon(color=status_color, icon="camera" if is_rented else "box", prefix="fa")
+        ).add_to(m)
+        
+    st_folium(m, width=1200, height=520)
 
 elif choice == "Equipment Inventory":
-    st.subheader("📦 Studio Equipment Inventory")
-    
-    df_eq = pd.read_sql("SELECT * FROM equipment", conn)
+    st.subheader("📦 Fotogenic Studio Inventory")
+    df_eq = pd.read_sql("SELECT equipment_id, name, category, model, status, current_lat, current_lng, last_location_update FROM equipment", conn)
     st.dataframe(df_eq, use_container_width=True)
     
-    with st.expander("➕ Add New Equipment"):
+    with st.expander("➕ Add New Studio Equipment"):
         with st.form("add_eq_form"):
             eq_id = st.text_input("Equipment ID (e.g., EQ-CAM-02)")
             name = st.text_input("Equipment Name")
@@ -92,21 +110,22 @@ elif choice == "Equipment Inventory":
             
             if submit and eq_id and name:
                 try:
-                    conn.execute("INSERT INTO equipment VALUES (?,?,?,?,?,?,0,'Available')", 
-                                 (eq_id, name, category, model, serial, tracker_id if tracker_id else None))
+                    conn.execute("""
+                        INSERT INTO equipment (equipment_id, name, category, model, serial_number, tracker_id, current_lat, current_lng, status) 
+                        VALUES (?,?,?,?,?,?,?,?,'Available')
+                    """, (eq_id, name, category, model, serial, tracker_id if tracker_id else None, STUDIO_LAT, STUDIO_LNG))
                     conn.commit()
-                    st.success("Equipment added successfully!")
+                    st.success("Equipment added successfully to Fotogenic Studio inventory!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
 
 elif choice == "Check-Out / Check-In Inspection":
-    st.subheader("🔄 Gear Check-Out & AI Damage Inspection Check-In")
-    
+    st.subheader("🔄 Gear Check-Out & Visual AI Damage Inspection")
     tab1, tab2, tab3 = st.tabs(["Check-Out Gear", "Check-In & Inspect Damage", "Active Rental Client Registry"])
     
     with tab1:
-        st.markdown("### 📋 Client Registration & Check-Out (Pre-Rental Baseline)")
+        st.markdown("### 📋 Client Registration & Check-Out")
         available_eq = conn.execute("SELECT equipment_id, name FROM equipment WHERE status='Available'").fetchall()
         eq_options = {item['name']: item['equipment_id'] for item in available_eq}
         
@@ -115,7 +134,7 @@ elif choice == "Check-Out / Check-In Inspection":
         col_c1, col_c2 = st.columns(2)
         with col_c1:
             client_name = st.text_input("Client / Crew Full Name")
-            client_phone = st.text_input("Phone Number (e.g., +251 9...)", value="+251 ")
+            client_phone = st.text_input("Phone Number", value="+251 ")
         with col_c2:
             client_digital_id = st.text_input("Digital ID / National ID Number")
         
@@ -123,7 +142,6 @@ elif choice == "Check-Out / Check-In Inspection":
         
         if st.button("Confirm Check-Out & Register Client") and eq_options and client_name:
             eq_id = eq_options[selected_name]
-            
             os.makedirs("uploads", exist_ok=True)
             baseline_path = None
             if baseline_file:
@@ -137,7 +155,7 @@ elif choice == "Check-Out / Check-In Inspection":
                 VALUES (?,?,?,?,?,?,'Active')
             """, (eq_id, client_name, client_phone, client_digital_id, datetime.now(), baseline_path))
             conn.commit()
-            st.success(f"✅ {selected_name} checked out to {client_name} ({client_phone})!")
+            st.success(f"✅ {selected_name} checked out to {client_name} from Fotogenic Studio!")
             st.rerun()
             
     with tab2:
@@ -149,9 +167,7 @@ elif choice == "Check-Out / Check-In Inspection":
         """).fetchall()
         
         rental_options = {f"{r['name']} — Client: {r['client_name']} ({r['client_phone']})": r for r in active_rentals}
-        
         selected_key = st.selectbox("Select Return Item", list(rental_options.keys()) if rental_options else ["No active rentals found"])
-        
         uploaded_file = st.file_uploader("Upload Photo of Returned Gear (Post-Rental)", type=["jpg", "jpeg", "png"], key="return")
         
         if st.button("Run AI Inspection & Complete Return") and rental_options and uploaded_file:
@@ -167,7 +183,6 @@ elif choice == "Check-Out / Check-In Inspection":
             if baseline_img_path and os.path.exists(baseline_img_path):
                 highlighted_img, damage_score = compare_photos(baseline_img_path, return_img_path)
             else:
-                st.info("No pre-rental baseline image was uploaded during check-out. Comparing return photo against self.")
                 highlighted_img, damage_score = compare_photos(return_img_path, return_img_path)
             
             col_a, col_b = st.columns(2)
@@ -178,7 +193,7 @@ elif choice == "Check-Out / Check-In Inspection":
                     st.image(highlighted_img, caption=f"AI Diff Analysis (Damage Score: {damage_score}%)", use_container_width=True)
                 
             if damage_score > 3.0:
-                st.warning(f"⚠️ Damage Detected! Score: {damage_score}% difference from clean baseline.")
+                st.warning(f"⚠️ Damage Detected! Score: {damage_score}% difference.")
             else:
                 st.success(f"✅ Gear returned in clean condition. Damage Score: {damage_score}%")
                 
@@ -187,9 +202,13 @@ elif choice == "Check-Out / Check-In Inspection":
             
             eq_id_row = conn.execute("SELECT equipment_id FROM inspections WHERE inspection_id=?", (insp_id,)).fetchone()
             if eq_id_row:
-                conn.execute("UPDATE equipment SET status='Available' WHERE equipment_id=?", (eq_id_row['equipment_id'],))
+                conn.execute("""
+                    UPDATE equipment 
+                    SET status='Available', current_lat=?, current_lng=?, last_location_update=? 
+                    WHERE equipment_id=?
+                """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_id_row['equipment_id']))
             conn.commit()
-            st.success("Inspection recorded and equipment returned to inventory status!")
+            st.success("Inspection recorded and equipment location reset to Fotogenic Studio base!")
 
     with tab3:
         st.markdown("### 📇 Active Rental Client Registry")
@@ -203,65 +222,76 @@ elif choice == "Check-Out / Check-In Inspection":
         """, conn)
         st.dataframe(df_rentals, use_container_width=True)
 
-elif choice == "Client Mobile GPS Check":
-    st.subheader("📱 Client Mobile Phone GPS Verification")
-    st.markdown("Use this page when a client or crew member is picking up gear on-site using their smartphone. This captures their phone's live GPS coordinates to verify they are within the 25km Addis Ababa zone.")
+elif choice == "On-Location GPS Ping (Location X)":
+    st.subheader("📡 Update Live Location X from Smartphone")
+    st.markdown("When on location with rented equipment, use this page on a smartphone to update the item's live location on the Fotogenic Studio map.")
 
-    geo_html = """
-    <div style="padding: 20px; background-color: #1e1e1e; border-radius: 10px; color: white; text-align: center;">
-        <h3>📍 Smartphone GPS Locator</h3>
-        <p>Click the button below to allow location access from your phone:</p>
-        <button onclick="getLocation()" style="background-color: #ff4b4b; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">Get My Phone Location</button>
-        <p id="demo" style="margin-top: 15px; font-family: monospace;"></p>
-    </div>
+    rented_items = conn.execute("SELECT equipment_id, name, current_lat, current_lng FROM equipment WHERE status='Rented'").fetchall()
+    item_map = {f"{r['name']} ({r['equipment_id']})": r for r in rented_items}
 
-    <script>
-    var x = document.getElementById("demo");
-    function getLocation() {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(showPosition, showError);
-        } else {
-            x.innerHTML = "Geolocation is not supported by this browser.";
+    if not item_map:
+        st.info("No equipment is currently rented out.")
+    else:
+        selected_item_key = st.selectbox("Select Equipment on Location X", list(item_map.keys()))
+        selected_item = item_map[selected_item_key]
+
+        geo_html = """
+        <div style="padding: 20px; background-color: #1e1e1e; border-radius: 10px; color: white; text-align: center;">
+            <h3>📍 Smartphone Location X Detector</h3>
+            <p>Click below to capture your current location GPS coordinates:</p>
+            <button onclick="getLocation()" style="background-color: #ff4b4b; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">Get Current GPS Location</button>
+            <p id="demo" style="margin-top: 15px; font-family: monospace; font-size: 16px; color: #00ffcc;"></p>
+        </div>
+
+        <script>
+        var x = document.getElementById("demo");
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(showPosition, showError);
+            } else {
+                x.innerHTML = "Geolocation is not supported by this browser.";
+            }
         }
-    }
-    function showPosition(position) {
-        x.innerHTML = "Latitude: " + position.coords.latitude + "<br>Longitude: " + position.coords.longitude;
-    }
-    function showError(error) {
-        switch(error.code) {
-            case error.PERMISSION_DENIED:
-                x.innerHTML = "User denied the request for Geolocation.";
-                break;
-            case error.POSITION_UNAVAILABLE:
-                x.innerHTML = "Location information is unavailable.";
-                break;
-            case error.TIMEOUT:
-                x.innerHTML = "The request to get user location timed out.";
-                break;
-            case error.UNKNOWN_ERROR:
-                x.innerHTML = "An unknown error occurred.";
-                break;
+        function showPosition(position) {
+            x.innerHTML = "LAT: " + position.coords.latitude + " | LNG: " + position.coords.longitude;
         }
-    }
-    </script>
-    """
-    
-    components.html(geo_html, height=250)
-    
-    st.markdown("---")
-    st.markdown("### Manual Coordinate Verification Test")
-    
-    with st.form("client_geo_form"):
-        c_lat = st.number_input("Latitude", value=9.0107, format="%.4f")
-        c_lng = st.number_input("Longitude", value=38.7612, format="%.4f")
-        client_name_input = st.text_input("Client / Crew Name")
-        verify_btn = st.form_submit_button("Verify Geofence Status")
-        
-        if verify_btn:
-            inside, dist = is_within_geofence(c_lat, c_lng)
-            if inside:
-                st.success(f"✅ Verified! {client_name_input} is **Inside Zone (Safe)**. Distance from Addis Ababa center: {round(dist, 2)} km.")
-            else:
-                st.error(f"🚨 ALERT! {client_name_input} is **OUT OF ZONE!** They are {round(dist, 2)} km away (exceeds 25km limit).")
+        function showError(error) {
+            x.innerHTML = "Error capturing location permission.";
+        }
+        </script>
+        """
+        components.html(geo_html, height=220)
+
+        with st.form("update_location_x_form"):
+            st.markdown("#### Save Location X Coordinates")
+            new_lat = st.number_input("Latitude", value=float(selected_item['current_lat'] or STUDIO_LAT), format="%.6f")
+            new_lng = st.number_input("Longitude", value=float(selected_item['current_lng'] or STUDIO_LNG), format="%.6f")
+            
+            submit_loc = st.form_submit_button("Update Equipment Position to Location X")
+            
+            if submit_loc:
+                eq_id = selected_item['equipment_id']
+                now = datetime.now()
+                
+                # Update main position
+                conn.execute("""
+                    UPDATE equipment 
+                    SET current_lat=?, current_lng=?, last_location_update=? 
+                    WHERE equipment_id=?
+                """, (new_lat, new_lng, now, eq_id))
+                
+                # Log history
+                conn.execute("""
+                    INSERT INTO location_logs (equipment_id, latitude, longitude, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (eq_id, new_lat, new_lng, now))
+                
+                conn.commit()
+                
+                inside, dist = is_within_geofence(new_lat, new_lng)
+                if inside:
+                    st.success(f"✅ Position updated! {selected_item['name']} is at Location X ({round(dist, 2)} km from Fotogenic Studio).")
+                else:
+                    st.error(f"🚨 GEOFENCE ALERT! {selected_item['name']} is {round(dist, 2)} km from Fotogenic Studio (EXCEEDS 25km LIMIT!).")
 
 conn.close()
