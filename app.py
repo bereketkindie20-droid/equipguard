@@ -59,6 +59,7 @@ choice = st.sidebar.radio("Go to", [
     "Dashboard & Live Fleet Map", 
     "Equipment Inventory (Catalog)", 
     "On-Location GPS Ping (Location X)",
+    "Journey Timeline & Audit Trail",
     "Check-Out / Check-In Inspection (Manager Only)"
 ])
 
@@ -229,6 +230,69 @@ elif choice == "On-Location GPS Ping (Location X)":
                     st.error(breach_msg)
                     send_telegram_alert(breach_msg)
 
+elif choice == "Journey Timeline & Audit Trail":
+    st.subheader("📜 Equipment Movement History & Journey Timeline")
+    st.markdown("Select an equipment item to audit all GPS coordinate pings and travel history from Fotogenic Studio.")
+    
+    all_eq = conn.execute("SELECT equipment_id, name FROM equipment").fetchall()
+    eq_selection_map = {f"{item[1]} ({item[0]})": item[0] for item in all_eq}
+    
+    if not eq_selection_map:
+        st.info("No equipment found in inventory.")
+    else:
+        selected_eq_key = st.selectbox("Select Equipment for Audit", list(eq_selection_map.keys()))
+        target_eq_id = eq_selection_map[selected_eq_key]
+        
+        # Fetch logs for this equipment
+        logs = conn.execute("""
+            SELECT latitude, longitude, updated_at 
+            FROM location_logs 
+            WHERE equipment_id = ? 
+            ORDER BY updated_at DESC
+        """, (target_eq_id,)).fetchall()
+        
+        if not logs:
+        # If no logs yet, fallback to studio base
+            st.info("No movement pings recorded yet for this item. Currently at Fotogenic Studio base.")
+        else:
+            st.markdown(f"### 🗺️ Travel Trail for {selected_eq_key}")
+            
+            # Draw journey map
+            m_trail = folium.Map(location=[STUDIO_LAT, STUDIO_LNG], zoom_start=12)
+            
+            # Studio Base Marker
+            folium.Marker(
+                location=[STUDIO_LAT, STUDIO_LNG],
+                popup="<b>🏠 Fotogenic Studio Base</b>",
+                icon=folium.Icon(color="blue", icon="home", prefix="fa")
+            ).add_to(m_trail)
+            
+            # Extract coordinates for path line
+            path_coords = [(STUDIO_LAT, STUDIO_LNG)]
+            
+            for idx, log in enumerate(reversed(logs)): # chronological order for line
+                lat, lng, timestamp = log[0], log[1], log[2]
+                path_coords.append((lat, lng))
+                
+                folium.Marker(
+                    location=[lat, lng],
+                    popup=f"<b>Waypoint {idx+1}</b><br>Time: {timestamp}<br>Lat: {lat}, Lng: {lng}",
+                    icon=folium.Icon(color="orange", icon="map-marker", prefix="fa")
+                ).add_to(m_trail)
+                
+            # Draw trail line
+            folium.PolyLine(path_coords, color="red", weight=3, tooltip="Equipment Journey Trail").add_to(m_trail)
+            st_folium(m_trail, width=1200, height=450)
+            
+            st.markdown("### 📋 Timestamped Movement Audit Log")
+            df_logs = pd.read_sql("""
+                SELECT latitude as Latitude, longitude as Longitude, updated_at as Timestamp 
+                FROM location_logs 
+                WHERE equipment_id = ? 
+                ORDER BY updated_at DESC
+            """, conn, params=(target_eq_id,))
+            st.dataframe(df_logs, use_container_width=True)
+
 elif choice == "Check-Out / Check-In Inspection (Manager Only)":
     if not st.session_state["authenticated"]:
         st.warning("🔒 This section is restricted to Fotogenic Studio managers. Please enter the manager password in the sidebar.")
@@ -337,8 +401,11 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                         WHERE equipment_id=?
                     """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_row[0]))
                     
-                    # Detailed Telegram Alert with Damage Type & Description
-                    return_msg = f"✅ *Gear Return & AI Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n🔍 *Damage Category:* `{damage_type}`\n📊 *Damage Score:* `{damage_score}%`\n📝 *Details:* {description}\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    if damage_score > 3.0:
+                        return_msg = f"⚠️ *DAMAGE ALERT!* Equipment Returned with Damage!\n\n📦 *Equipment:* {eq_row[1]}\n🔍 *Damage Category:* `{damage_type}`\n📊 *Damage Score:* `{damage_score}%`\n📝 *Details:* {description}\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    else:
+                        return_msg = f"✅ *Gear Return & AI Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n🔍 *Damage Category:* `{damage_type}`\n📊 *Damage Score:* `{damage_score}%`\n📝 *Details:* {description}\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    
                     send_telegram_alert(return_msg)
 
                 conn.commit()
@@ -350,10 +417,10 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 SELECT i.inspection_id, e.name as Equipment, i.client_name as Client_Name, 
                        i.client_phone as Phone, i.client_digital_id as Digital_ID, 
                        i.check_out_time as Check_Out_Time, i.status
-            FROM inspections i 
-            JOIN equipment e ON i.equipment_id = e.equipment_id
-            WHERE i.status='Active'
-        """, conn)
-        st.dataframe(df_rentals, use_container_width=True)
+                FROM inspections i 
+                JOIN equipment e ON i.equipment_id = e.equipment_id
+                WHERE i.status='Active'
+            """, conn)
+            st.dataframe(df_rentals, use_container_width=True)
 
 conn.close()
