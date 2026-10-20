@@ -26,7 +26,17 @@ def init_db():
         )
     """)
     
-    # Location Logs Table (Tracks journey from Fotogenic Studio to Location X)
+    # Safely check and add columns if an older database version exists
+    cursor.execute("PRAGMA table_info(equipment)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'current_lat' not in columns:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN current_lat REAL DEFAULT 9.011556")
+    if 'current_lng' not in columns:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN current_lng REAL DEFAULT 38.781258")
+    if 'last_location_update' not in columns:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN last_location_update DATETIME")
+    
+    # Location Logs Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS location_logs (
             log_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +66,7 @@ def init_db():
         )
     """)
 
-    # Populate initial sample gear for Fotogenic Studio if empty
+    # Populate sample gear if empty
     cursor.execute("SELECT COUNT(*) FROM equipment")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO equipment VALUES ('EQ-CAM-01', 'Sony A7IV Camera Kit', 'Camera', 'A7IV', 'SN987654', 'TRK-001', 50.0, 'Available', 9.011556, 38.781258, CURRENT_TIMESTAMP)")
