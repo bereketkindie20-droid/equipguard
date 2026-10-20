@@ -301,21 +301,24 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                     f.write(uploaded_file.getbuffer())
                     
                 if baseline_img_path and os.path.exists(baseline_img_path):
-                    highlighted_img, damage_score = compare_photos(baseline_img_path, return_img_path)
+                    highlighted_img, damage_score, damage_type, description = compare_photos(baseline_img_path, return_img_path)
                 else:
-                    highlighted_img, damage_score = compare_photos(return_img_path, return_img_path)
+                    highlighted_img, damage_score, damage_type, description = compare_photos(return_img_path, return_img_path)
                 
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.image(uploaded_file, caption="Returned Gear Photo", use_container_width=True)
                 with col_b:
                     if highlighted_img:
-                        st.image(highlighted_img, caption=f"AI Diff Analysis (Damage Score: {damage_score}%)", use_container_width=True)
+                        st.image(highlighted_img, caption=f"AI Analysis: {damage_type} ({damage_score}%)", use_container_width=True)
+                
+                st.markdown(f"### 🔍 AI Inspection Diagnosis: **{damage_type}**")
+                st.info(description)
                     
                 if damage_score > 3.0:
-                    st.warning(f"⚠️ Damage Detected! Score: {damage_score}% difference.")
+                    st.warning(f"⚠️ Significant Damage Detected! Type: {damage_type} | Score: {damage_score}%")
                 else:
-                    st.success(f"✅ Gear returned in clean condition. Damage Score: {damage_score}%")
+                    st.success(f"✅ Gear returned in clean condition. Type: {damage_type} | Score: {damage_score}%")
                     
                 conn.execute("UPDATE inspections SET check_in_time=?, return_photo=?, damage_score=?, status=? WHERE inspection_id=?",
                              (datetime.now(), return_img_path, damage_score, 'Completed', insp_id))
@@ -334,12 +337,8 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                         WHERE equipment_id=?
                     """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_row[0]))
                     
-                    # FIXED: Send Telegram Alert for BOTH normal returns and damaged returns
-                    if damage_score > 3.0:
-                        return_msg = f"⚠️ *DAMAGE ALERT!* Equipment Returned with Damage!\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* `{damage_score}%`\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
-                    else:
-                        return_msg = f"✅ *Gear Return & Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* `{damage_score}%`\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
-                    
+                    # Detailed Telegram Alert with Damage Type & Description
+                    return_msg = f"✅ *Gear Return & AI Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n🔍 *Damage Category:* `{damage_type}`\n📊 *Damage Score:* `{damage_score}%`\n📝 *Details:* {description}\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
                     send_telegram_alert(return_msg)
 
                 conn.commit()
