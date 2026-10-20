@@ -65,24 +65,25 @@ if choice == "Dashboard & Live Fleet Map":
         tooltip="25km Authorized Operational Zone"
     ).add_to(m)
     
-    # Query equipment list
-    equipment_list = conn.execute("SELECT * FROM equipment").fetchall()
+    # Query equipment list safely using pandas or dict rows
+    equipment_list = conn.execute("SELECT equipment_id, name, category, status, current_lat, current_lng, last_location_update FROM equipment").fetchall()
     
     for eq in equipment_list:
-        lat = eq['current_lat'] if eq['current_lat'] else STUDIO_LAT
-        lng = eq['current_lng'] if eq['current_lng'] else STUDIO_LNG
+        eq_id, name, category, status, lat, lng, last_update = eq[0], eq[1], eq[2], eq[3], eq[4], eq[5], eq[6]
+        
+        lat = float(lat) if lat is not None else STUDIO_LAT
+        lng = float(lng) if lng is not None else STUDIO_LNG
         
         inside, dist = is_within_geofence(lat, lng)
-        is_rented = eq['status'] == 'Rented'
+        is_rented = (status == 'Rented')
         
         status_color = "red" if not inside else ("orange" if is_rented else "green")
-        status_label = "OUT OF ZONE!" if not inside else ("On Location X" in [status_color == 'orange'] and "At Location X" or "In Studio")
         
         popup_html = f"""
-        <b>Equipment:</b> {eq['name']} ({eq['equipment_id']})<br>
+        <b>Equipment:</b> {name} ({eq_id})<br>
         <b>Status:</b> <span style="color:{status_color};"><b>{'On Location X' if is_rented else 'In Studio'}</b></span><br>
         <b>Distance from Studio:</b> {round(dist, 2)} km<br>
-        <b>Last Updated:</b> {eq['last_location_update'] or 'N/A'}
+        <b>Last Updated:</b> {last_update or 'N/A'}
         """
         
         folium.Marker(
@@ -127,7 +128,7 @@ elif choice == "Check-Out / Check-In Inspection":
     with tab1:
         st.markdown("### 📋 Client Registration & Check-Out")
         available_eq = conn.execute("SELECT equipment_id, name FROM equipment WHERE status='Available'").fetchall()
-        eq_options = {item['name']: item['equipment_id'] for item in available_eq}
+        eq_options = {item[1]: item[0] for item in available_eq}
         
         selected_name = st.selectbox("Select Equipment to Rent Out", list(eq_options.keys()) if eq_options else ["No equipment available"])
         
@@ -166,14 +167,13 @@ elif choice == "Check-Out / Check-In Inspection":
             WHERE i.status='Active' OR i.status='Pending'
         """).fetchall()
         
-        rental_options = {f"{r['name']} — Client: {r['client_name']} ({r['client_phone']})": r for r in active_rentals}
+        rental_options = {f"{r[1]} — Client: {r[2]} ({r[3]})": r for r in active_rentals}
         selected_key = st.selectbox("Select Return Item", list(rental_options.keys()) if rental_options else ["No active rentals found"])
         uploaded_file = st.file_uploader("Upload Photo of Returned Gear (Post-Rental)", type=["jpg", "jpeg", "png"], key="return")
         
         if st.button("Run AI Inspection & Complete Return") and rental_options and uploaded_file:
             rental_info = rental_options[selected_key]
-            insp_id = rental_info['inspection_id']
-            baseline_img_path = rental_info['baseline_photo']
+            insp_id, baseline_img_path = rental_info[0], rental_info[4]
             
             os.makedirs("uploads", exist_ok=True)
             return_img_path = f"uploads/return_{insp_id}.jpg"
@@ -206,7 +206,7 @@ elif choice == "Check-Out / Check-In Inspection":
                     UPDATE equipment 
                     SET status='Available', current_lat=?, current_lng=?, last_location_update=? 
                     WHERE equipment_id=?
-                """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_id_row['equipment_id']))
+                """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_id_row[0]))
             conn.commit()
             st.success("Inspection recorded and equipment location reset to Fotogenic Studio base!")
 
@@ -227,13 +227,14 @@ elif choice == "On-Location GPS Ping (Location X)":
     st.markdown("When on location with rented equipment, use this page on a smartphone to update the item's live location on the Fotogenic Studio map.")
 
     rented_items = conn.execute("SELECT equipment_id, name, current_lat, current_lng FROM equipment WHERE status='Rented'").fetchall()
-    item_map = {f"{r['name']} ({r['equipment_id']})": r for r in rented_items}
+    item_map = {f"{r[1]} ({r[0]})": r for r in rented_items}
 
     if not item_map:
         st.info("No equipment is currently rented out.")
     else:
         selected_item_key = st.selectbox("Select Equipment on Location X", list(item_map.keys()))
         selected_item = item_map[selected_item_key]
+        eq_id, eq_name, cur_lat, cur_lng = selected_item[0], selected_item[1], selected_item[2], selected_item[3]
 
         geo_html = """
         <div style="padding: 20px; background-color: #1e1e1e; border-radius: 10px; color: white; text-align: center;">
@@ -264,13 +265,12 @@ elif choice == "On-Location GPS Ping (Location X)":
 
         with st.form("update_location_x_form"):
             st.markdown("#### Save Location X Coordinates")
-            new_lat = st.number_input("Latitude", value=float(selected_item['current_lat'] or STUDIO_LAT), format="%.6f")
-            new_lng = st.number_input("Longitude", value=float(selected_item['current_lng'] or STUDIO_LNG), format="%.6f")
+            new_lat = st.number_input("Latitude", value=float(cur_lat if cur_lat is not None else STUDIO_LAT), format="%.6f")
+            new_lng = st.number_input("Longitude", value=float(cur_lng if cur_lng is not None else STUDIO_LNG), format="%.6f")
             
             submit_loc = st.form_submit_button("Update Equipment Position to Location X")
             
             if submit_loc:
-                eq_id = selected_item['equipment_id']
                 now = datetime.now()
                 
                 # Update main position
@@ -290,8 +290,8 @@ elif choice == "On-Location GPS Ping (Location X)":
                 
                 inside, dist = is_within_geofence(new_lat, new_lng)
                 if inside:
-                    st.success(f"✅ Position updated! {selected_item['name']} is at Location X ({round(dist, 2)} km from Fotogenic Studio).")
+                    st.success(f"✅ Position updated! {eq_name} is at Location X ({round(dist, 2)} km from Fotogenic Studio).")
                 else:
-                    st.error(f"🚨 GEOFENCE ALERT! {selected_item['name']} is {round(dist, 2)} km from Fotogenic Studio (EXCEEDS 25km LIMIT!).")
+                    st.error(f"🚨 GEOFENCE ALERT! {eq_name} is {round(dist, 2)} km from Fotogenic Studio (EXCEEDS 25km LIMIT!).")
 
 conn.close()
