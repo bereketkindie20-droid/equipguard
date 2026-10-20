@@ -235,7 +235,6 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
     else:
         st.subheader("🔄 Gear Check-Out & Visual AI Damage Inspection")
         
-        # Quick Telegram Test Button for Manager
         if st.button("🧪 Send Test Telegram Alert to My Phone"):
             send_telegram_alert("🔔 *Test Alert:* EquipGuard is successfully connected to Bereket's Telegram bot for Fotogenic Studio!")
             st.success("Test message sent! Check your Telegram app.")
@@ -274,7 +273,6 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 """, (eq_id, client_name, client_phone, client_digital_id, datetime.now(), baseline_path))
                 conn.commit()
                 
-                # Send Telegram Check-Out Alert
                 checkout_msg = f"📋 *Gear Check-Out Alert*\n\n📦 *Equipment:* {selected_name} (`{eq_id}`)\n👤 *Client:* {client_name}\n📞 *Phone:* {client_phone}\n🆔 *Digital ID:* {client_digital_id}\n📍 *Base:* Fotogenic Studio"
                 send_telegram_alert(checkout_msg)
                 
@@ -322,7 +320,14 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 conn.execute("UPDATE inspections SET check_in_time=?, return_photo=?, damage_score=?, status=? WHERE inspection_id=?",
                              (datetime.now(), return_img_path, damage_score, 'Completed', insp_id))
                 
-                eq_row = conn.execute("SELECT equipment_id, name FROM inspections JOIN equipment ON inspections.equipment_id = equipment.equipment_id WHERE inspection_id=?", (insp_id,)).fetchone()
+                # FIXED: Fully qualified column names to avoid ambiguity
+                eq_row = conn.execute("""
+                    SELECT equipment.equipment_id, equipment.name 
+                    FROM inspections 
+                    JOIN equipment ON inspections.equipment_id = equipment.equipment_id 
+                    WHERE inspections.inspection_id = ?
+                """, (insp_id,)).fetchone()
+                
                 if eq_row:
                     conn.execute("""
                         UPDATE equipment 
@@ -330,7 +335,6 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                         WHERE equipment_id=?
                     """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_row[0]))
                     
-                    # Send Telegram Check-In Alert
                     return_msg = f"✅ *Gear Return & Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* {damage_score}%\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
                     send_telegram_alert(return_msg)
 
