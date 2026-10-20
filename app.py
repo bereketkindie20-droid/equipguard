@@ -320,7 +320,6 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 conn.execute("UPDATE inspections SET check_in_time=?, return_photo=?, damage_score=?, status=? WHERE inspection_id=?",
                              (datetime.now(), return_img_path, damage_score, 'Completed', insp_id))
                 
-                # FIXED: Fully qualified column names to avoid ambiguity
                 eq_row = conn.execute("""
                     SELECT equipment.equipment_id, equipment.name 
                     FROM inspections 
@@ -335,7 +334,12 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                         WHERE equipment_id=?
                     """, (STUDIO_LAT, STUDIO_LNG, datetime.now(), eq_row[0]))
                     
-                    return_msg = f"✅ *Gear Return & Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* {damage_score}%\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    # FIXED: Send Telegram Alert for BOTH normal returns and damaged returns
+                    if damage_score > 3.0:
+                        return_msg = f"⚠️ *DAMAGE ALERT!* Equipment Returned with Damage!\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* `{damage_score}%`\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    else:
+                        return_msg = f"✅ *Gear Return & Inspection Completed*\n\n📦 *Equipment:* {eq_row[1]}\n📊 *AI Damage Score:* `{damage_score}%`\n🏠 *Status:* Returned & Reset to Fotogenic Studio"
+                    
                     send_telegram_alert(return_msg)
 
                 conn.commit()
@@ -347,10 +351,10 @@ elif choice == "Check-Out / Check-In Inspection (Manager Only)":
                 SELECT i.inspection_id, e.name as Equipment, i.client_name as Client_Name, 
                        i.client_phone as Phone, i.client_digital_id as Digital_ID, 
                        i.check_out_time as Check_Out_Time, i.status
-                FROM inspections i 
-                JOIN equipment e ON i.equipment_id = e.equipment_id
-                WHERE i.status='Active'
-            """, conn)
-            st.dataframe(df_rentals, use_container_width=True)
+            FROM inspections i 
+            JOIN equipment e ON i.equipment_id = e.equipment_id
+            WHERE i.status='Active'
+        """, conn)
+        st.dataframe(df_rentals, use_container_width=True)
 
 conn.close()
