@@ -20,14 +20,41 @@ st.markdown("Professional gear tracking from Mickey Leland St base to Location X
 # Fotogenic Studio Home Base Coordinates (Mickey Leland St, Addis Ababa)
 STUDIO_LAT, STUDIO_LNG = 9.011556, 38.781258
 
-# Sidebar Navigation
-st.sidebar.title("Navigation")
-choice = st.sidebar.radio("Go to", [
-    "Dashboard & Live Fleet Map", 
-    "Equipment Inventory", 
-    "Check-Out / Check-In Inspection", 
-    "On-Location GPS Ping (Location X)"
-])
+# --- SECURITY / AUTHENTICATION SETUP ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+st.sidebar.title("🔐 Studio Access Portal")
+password_input = st.sidebar.text_input("Manager Password", type="password")
+
+# You can change your password here
+ADMIN_PASSWORD = "fotogenic2026"
+
+if password_input == ADMIN_PASSWORD:
+    st.session_state["authenticated"] = True
+
+if st.session_state["authenticated"]:
+    st.sidebar.success("🔓 Manager Mode Unlocked")
+    if st.sidebar.button("Lock Session"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+else:
+    st.sidebar.info("🔒 Enter manager password to access management controls.")
+
+# Sidebar Navigation based on Authentication
+if st.session_state["authenticated"]:
+    choice = st.sidebar.radio("Go to", [
+        "Dashboard & Live Fleet Map", 
+        "Equipment Inventory", 
+        "Check-Out / Check-In Inspection", 
+        "On-Location GPS Ping (Location X)"
+    ])
+else:
+    choice = st.sidebar.radio("Go to", [
+        "Dashboard & Live Fleet Map",
+        "On-Location GPS Ping (Location X)"
+    ])
+    st.sidebar.warning("Restricted: Inventory & Check-out require manager login.")
 
 conn = get_connection()
 
@@ -65,7 +92,6 @@ if choice == "Dashboard & Live Fleet Map":
         tooltip="25km Authorized Operational Zone"
     ).add_to(m)
     
-    # Query equipment list safely using pandas or dict rows
     equipment_list = conn.execute("SELECT equipment_id, name, category, status, current_lat, current_lng, last_location_update FROM equipment").fetchall()
     
     for eq in equipment_list:
@@ -94,7 +120,7 @@ if choice == "Dashboard & Live Fleet Map":
         
     st_folium(m, width=1200, height=520)
 
-elif choice == "Equipment Inventory":
+elif choice == "Equipment Inventory" and st.session_state["authenticated"]:
     st.subheader("📦 Fotogenic Studio Inventory")
     df_eq = pd.read_sql("SELECT equipment_id, name, category, model, status, current_lat, current_lng, last_location_update FROM equipment", conn)
     st.dataframe(df_eq, use_container_width=True)
@@ -121,7 +147,7 @@ elif choice == "Equipment Inventory":
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-elif choice == "Check-Out / Check-In Inspection":
+elif choice == "Check-Out / Check-In Inspection" and st.session_state["authenticated"]:
     st.subheader("🔄 Gear Check-Out & Visual AI Damage Inspection")
     tab1, tab2, tab3 = st.tabs(["Check-Out Gear", "Check-In & Inspect Damage", "Active Rental Client Registry"])
     
@@ -273,14 +299,12 @@ elif choice == "On-Location GPS Ping (Location X)":
             if submit_loc:
                 now = datetime.now()
                 
-                # Update main position
                 conn.execute("""
                     UPDATE equipment 
                     SET current_lat=?, current_lng=?, last_location_update=? 
                     WHERE equipment_id=?
                 """, (new_lat, new_lng, now, eq_id))
                 
-                # Log history
                 conn.execute("""
                     INSERT INTO location_logs (equipment_id, latitude, longitude, updated_at)
                     VALUES (?, ?, ?, ?)
